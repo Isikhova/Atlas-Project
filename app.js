@@ -7,6 +7,8 @@ const photoInput = document.querySelector("#photo-input");
 const startCameraButton = document.querySelector("#start-camera");
 const captureButton = document.querySelector("#freeze-camera");
 const runScanButton = document.querySelector("#run-scan");
+const completeArmButton = document.querySelector("#complete-arm");
+const useBestFrameButton = document.querySelector("#use-best-frame");
 const resetAnalysisButton = document.querySelector("#reset-analysis");
 const cameraVideo = document.querySelector("#camera-video");
 const cameraStatus = document.querySelector("#camera-status");
@@ -20,6 +22,9 @@ const limbOutput = document.querySelector("#limb-output");
 const ratioPrimary = document.querySelector("#ratio-femur-tibia");
 const ratioSecondary = document.querySelector("#ratio-femur-torso");
 const classificationOutput = document.querySelector("#classification-output");
+const firstArmCard = document.querySelector("#first-arm-card");
+const secondArmCard = document.querySelector("#second-arm-card");
+const comparisonSummary = document.querySelector("#comparison-summary");
 const scanProgress = document.querySelector("#scan-progress");
 const scanPercent = document.querySelector("#scan-percent");
 const scanSteps = [...document.querySelectorAll(".scan-steps li")];
@@ -45,6 +50,10 @@ let cameraFrameId = 0;
 let lastVideoTime = -1;
 let lastResult = null;
 let runningMode = "VIDEO";
+let latestArmScan = null;
+let bestArmScan = null;
+let bestFrameDataUrl = "";
+let completedScans = [];
 
 function prepareSteps() {
   scanSteps.forEach((step, index) => {
@@ -62,13 +71,16 @@ function setProgress(percent, activeStep) {
   });
 }
 
-function resetResults(summary = "Montrez un bras fléchi, épaule/coude/poignet visibles, puis lancez l'analyse.") {
+function resetResults(summary = "Montrez un bras fléchi avec coude et poignet visibles, puis lancez l'analyse.") {
   primaryRatioLabel.textContent = "Bras / avant-bras";
   secondaryRatioLabel.textContent = "Qualité capture";
   limbOutput.textContent = "-";
   ratioPrimary.textContent = "-";
   ratioSecondary.textContent = "-";
   classificationOutput.textContent = "Non analysée";
+  completeArmButton.disabled = true;
+  useBestFrameButton.disabled = !bestArmScan;
+  latestArmScan = null;
   analysisSummary.textContent = summary;
   if (poseLandmarker) analysisConfidence.textContent = "Prêt";
   setProgress(0, 0);
@@ -148,10 +160,18 @@ function armCandidate(landmarks, frame, config) {
   const upperArm = distance(points[0], points[1]);
   const forearm = distance(points[1], points[2]);
   const angle = elbowAngle(points[0], points[1], points[2]);
+  const shoulderReliable = points[0].visibility >= 0.35;
+  const elbowReliable = points[1].visibility >= 0.38;
+  const wristReliable = points[2].visibility >= 0.38;
+  const reliability = (points[0].visibility * 0.25) + (points[1].visibility * 0.4) + (points[2].visibility * 0.35);
   return {
     ...config,
     points,
     visibility,
+    reliability,
+    shoulderReliable,
+    elbowReliable,
+    wristReliable,
     upperArm,
     forearm,
     angle,
@@ -171,10 +191,11 @@ function elbowAngle(shoulder, elbow, wrist) {
 }
 
 function captureQuality(candidate) {
-  const visibilityScore = candidate.visibility * 55;
-  const angleScore = Math.max(0, 1 - Math.abs(candidate.angle - 90) / 70) * 30;
-  const sizeScore = Math.min(1, candidate.total / 220) * 15;
-  return Math.round(Math.min(100, visibilityScore + angleScore + sizeScore));
+  const visibilityScore = candidate.reliability * 48;
+  const angleScore = Math.max(0, 1 - Math.abs(candidate.angle - 100) / 85) * 27;
+  const sizeScore = Math.min(1, candidate.total / 170) * 20;
+  const stabilityBonus = candidate.elbowReliable && candidate.wristReliable ? 5 : 0;
+  return Math.round(Math.min(100, visibilityScore + angleScore + sizeScore + stabilityBonus));
 }
 
 function chooseBestArm(landmarks, frame) {
@@ -195,7 +216,7 @@ function chooseBestArm(landmarks, frame) {
 
   return configs
     .map((config) => armCandidate(landmarks, frame, config))
-    .filter((candidate) => candidate.visibility > 0.45 && candidate.total > 70)
+    .filter((candidate) => candidate.elbowReliable && candidate.wristReliable && candidate.total > 48)
     .sort((a, b) => captureQuality(b) - captureQuality(a))[0];
 }
 
@@ -205,13 +226,29 @@ function classifyBiceps(candidate) {
   return "proxy biceps moyen";
 }
 
+function toArmScan(candidate) {
+  return {
+    side: candidate.side,
+    label: candidate.label,
+    ratio: candidate.ratio,
+    quality: captureQuality(candidate),
+    angle: candidate.angle,
+    classification: classifyBiceps(candidate),
+    upperArm: candidate.upperArm,
+    forearm: candidate.forearm,
+  };
+}
+
 function bicepsGuidance(candidate) {
   const quality = captureQuality(candidate);
-  if (quality < 55) {
-    return "Qualité faible: rapprochez le bras, gardez épaule/coude/poignet visibles et fléchissez autour de 90 degrés.";
+  if (!candidate.shoulderReliable) {
+    return "Épaule faible: gardez le coude/poignet visibles et reculez légèrement pour inclure l'épaule.";
   }
-  if (Math.abs(candidate.angle - 90) > 25) {
-    return "Angle imparfait: fléchissez davantage ou ouvrez moins le coude pour approcher 90 degrés.";
+  if (quality < 48) {
+    return "Qualité faible: rapprochez le bras ou améliorez la lumière. Coude et poignet doivent rester visibles.";
+  }
+  if (candidate.angle < 60 || candidate.angle > 145) {
+    return "Angle difficile: fléchissez le bras pour rester entre environ 70° et 130°.";
   }
   return "Capture exploitable: estimation proxy basée sur les proportions bras/avant-bras.";
 }
@@ -223,6 +260,8 @@ function renderDetection(result) {
     setProgress(25, 0);
     analysisConfidence.textContent = "Aucune pose";
     analysisSummary.textContent = "Aucun bras détecté. Montrez un bras entier avec épaule, coude et poignet visibles.";
+    latestArmScan = null;
+    completeArmButton.disabled = true;
     return;
   }
 
@@ -231,14 +270,18 @@ function renderDetection(result) {
     setProgress(45, 1);
     analysisConfidence.textContent = "Bras incomplet";
     analysisSummary.textContent = "Pose détectée, mais épaule, coude ou poignet ne sont pas assez visibles.";
+    latestArmScan = null;
+    completeArmButton.disabled = true;
     return;
   }
 
   drawLine(candidate.points, "#cf5b43");
   const classification = classifyBiceps(candidate);
   const quality = captureQuality(candidate);
+  latestArmScan = toArmScan(candidate);
+  rememberBestScan(latestArmScan);
 
-  const activeStep = quality > 68 ? 3 : Math.abs(candidate.angle - 90) > 30 ? 1 : 2;
+  const activeStep = quality > 55 ? 3 : candidate.angle < 60 || candidate.angle > 145 ? 1 : 2;
   setProgress(quality, activeStep);
   primaryRatioLabel.textContent = "Bras / avant-bras";
   secondaryRatioLabel.textContent = "Qualité capture";
@@ -247,7 +290,128 @@ function renderDetection(result) {
   ratioSecondary.textContent = `${quality}%`;
   classificationOutput.textContent = classification;
   analysisConfidence.textContent = `${quality}% qualité`;
-  analysisSummary.textContent = `${bicepsGuidance(candidate)} Angle coude ${Math.round(candidate.angle)}°, ratio ${candidate.ratio.toFixed(2)}. Note: les insertions réelles du biceps nécessiteront une analyse de contour/segmentation.`;
+  completeArmButton.disabled = !canCompleteLatestScan();
+  analysisSummary.textContent = buildGuidance(candidate);
+}
+
+function canCompleteLatestScan() {
+  if (!latestArmScan || latestArmScan.quality < 50) return false;
+  if (completedScans.length === 0) return true;
+  return latestArmScan.side !== completedScans[0].side;
+}
+
+function buildGuidance(candidate) {
+  const scan = toArmScan(candidate);
+  const base = `${bicepsGuidance(candidate)} Angle coude ${Math.round(candidate.angle)}°, ratio ${candidate.ratio.toFixed(2)}.`;
+  if (scan.quality < 50) {
+    return `${base} Qualité encore trop faible. Essayez de garder coude et poignet visibles, ou utilisez “Meilleur scan”.`;
+  }
+  if (completedScans.length === 0) {
+    return `${base} Vous pouvez valider ce premier bras.`;
+  }
+  if (scan.side === completedScans[0].side) {
+    return `${base} Premier bras déjà scanné: montrez l'autre bras pour compléter le scan.`;
+  }
+  return `${base} Vous pouvez valider le deuxième bras.`;
+}
+
+function rememberBestScan(scan) {
+  if (!scan) return;
+  const isDifferentSecondArm = completedScans.length === 0 || scan.side !== completedScans[0].side;
+  if (!isDifferentSecondArm) return;
+  if (!bestArmScan || scan.quality > bestArmScan.quality) {
+    bestArmScan = { ...scan };
+    bestFrameDataUrl = bodyCanvas.toDataURL("image/png");
+    useBestFrameButton.disabled = false;
+  }
+}
+
+function useBestFrame() {
+  if (!bestArmScan) return;
+  latestArmScan = { ...bestArmScan };
+  limbOutput.textContent = latestArmScan.label;
+  ratioPrimary.textContent = latestArmScan.ratio.toFixed(2);
+  ratioSecondary.textContent = `${latestArmScan.quality}%`;
+  classificationOutput.textContent = latestArmScan.classification;
+  analysisConfidence.textContent = `${latestArmScan.quality}% qualité`;
+  completeArmButton.disabled = !canCompleteLatestScan();
+  analysisSummary.textContent = `Meilleur scan repris (${latestArmScan.label}, qualité ${latestArmScan.quality}%). Vous pouvez le valider si le bras affiché correspond bien.`;
+
+  if (bestFrameDataUrl) {
+    const image = new Image();
+    image.onload = () => {
+      analysisImage = image;
+      isCameraLive = false;
+      cancelAnimationFrame(cameraFrameId);
+      drawBaseFrame();
+    };
+    image.src = bestFrameDataUrl;
+  }
+}
+
+function renderArmCard(card, scan, fallback) {
+  if (!scan) {
+    card.innerHTML = fallback;
+    card.classList.remove("complete");
+    return;
+  }
+  card.classList.add("complete");
+  card.innerHTML = `
+    <span>${scan.label}</span>
+    <strong>${scan.classification}</strong>
+    <p>Ratio ${scan.ratio.toFixed(2)} · qualité ${scan.quality}% · angle ${Math.round(scan.angle)}°</p>
+  `;
+}
+
+function renderCompletedScans() {
+  renderArmCard(
+    firstArmCard,
+    completedScans[0],
+    "<span>Bras 1</span><strong>En attente</strong><p>Validez un premier bras quand la qualité est suffisante.</p>"
+  );
+  renderArmCard(
+    secondArmCard,
+    completedScans[1],
+    "<span>Bras 2</span><strong>En attente</strong><p>L'app vous guidera vers le deuxième bras après validation du premier.</p>"
+  );
+
+  if (completedScans.length < 2) {
+    comparisonSummary.textContent =
+      completedScans.length === 1
+        ? `Premier scan enregistré (${completedScans[0].label}). Montrez l'autre bras pour compléter la comparaison.`
+        : "Complétez les deux bras pour afficher la comparaison.";
+    return;
+  }
+
+  const [first, second] = completedScans;
+  const ratioGap = Math.abs(first.ratio - second.ratio);
+  const qualityAverage = Math.round((first.quality + second.quality) / 2);
+  const symmetry =
+    ratioGap < 0.05
+      ? "proportions très proches"
+      : ratioGap < 0.1
+        ? "légère différence de proportion"
+        : "différence notable de proportion";
+
+  comparisonSummary.textContent = `Scan complet: ${first.label} et ${second.label}. ${symmetry}; écart ratio ${ratioGap.toFixed(2)}, qualité moyenne ${qualityAverage}%.`;
+}
+
+function completeCurrentArm() {
+  if (!latestArmScan || !canCompleteLatestScan()) return;
+  completedScans.push(latestArmScan);
+  bestArmScan = null;
+  bestFrameDataUrl = "";
+  useBestFrameButton.disabled = true;
+  renderCompletedScans();
+
+  if (completedScans.length === 1) {
+    analysisSummary.textContent = `${latestArmScan.label} enregistré. Montrez maintenant l'autre bras, même pose, puis validez quand la qualité est suffisante.`;
+    completeArmButton.disabled = true;
+    return;
+  }
+
+  analysisSummary.textContent = "Scan des deux bras terminé. Les résultats comparatifs sont affichés.";
+  completeArmButton.disabled = true;
 }
 
 async function initPoseModel() {
@@ -267,7 +431,7 @@ async function initPoseModel() {
       minTrackingConfidence: 0.45,
     });
     analysisConfidence.textContent = "Prêt";
-    analysisSummary.textContent = "Modèle prêt. Montrez un bras fléchi à environ 90 degrés pour estimer le profil biceps.";
+    analysisSummary.textContent = "Modèle prêt. Montrez un bras fléchi; le meilleur scan sera gardé automatiquement.";
     runScanButton.disabled = !analysisImage && !isCameraLive;
   } catch (error) {
     console.error("Pose model failed", error);
@@ -398,6 +562,11 @@ function resetAnalysis() {
   isCameraLive = false;
   cancelAnimationFrame(cameraFrameId);
   lastResult = null;
+  latestArmScan = null;
+  bestArmScan = null;
+  bestFrameDataUrl = "";
+  completedScans = [];
+  renderCompletedScans();
   resetResults();
   if (analysisImage) {
     drawBaseFrame();
@@ -418,8 +587,11 @@ photoInput.addEventListener("change", () => {
 startCameraButton.addEventListener("click", startCamera);
 captureButton.addEventListener("click", captureCameraFrame);
 runScanButton.addEventListener("click", detectCurrentFrame);
+completeArmButton.addEventListener("click", completeCurrentArm);
+useBestFrameButton.addEventListener("click", useBestFrame);
 resetAnalysisButton.addEventListener("click", resetAnalysis);
 
 prepareSteps();
+renderCompletedScans();
 resetResults("Chargement du modèle de détection biceps...");
 initPoseModel();
