@@ -32,7 +32,7 @@
               <canvas id="body-canvas" width="460" height="620" aria-label="Scanner corporel"></canvas>
               <div id="canvas-empty" class="scan-empty">
                 <strong>Prêt pour le scan</strong>
-                <span>Montrez un bras fléchi à 90 degrés, épaule, coude et poignet visibles.</span>
+                <span>Montrez un bras fléchi, coude et poignet bien visibles.</span>
               </div>
               <div class="scan-frame" aria-hidden="true">
                 <span class="scan-line"></span>
@@ -43,6 +43,8 @@
               <button id="start-camera" type="button">Démarrer caméra</button>
               <button id="run-scan" type="button" disabled>Analyser</button>
               <button id="freeze-camera" type="button" disabled>Capturer</button>
+              <button id="complete-arm" type="button" disabled>Valider ce bras</button>
+              <button id="use-best-frame" type="button" disabled>Meilleur scan</button>
             </div>
 
             <label class="upload-card" for="photo-input">
@@ -53,9 +55,9 @@
             </label>
 
             <ul class="capture-protocol">
-              <li>Bras fléchi autour de 90°</li>
-              <li>Épaule, coude et poignet dans le cadre</li>
-              <li>Caméra face ou trois-quarts, fond simple</li>
+              <li>Montrez surtout coude et poignet</li>
+              <li>Épaule visible si possible, sans forcer</li>
+              <li>Angle accepté: environ 70° à 130°</li>
             </ul>
           </section>
 
@@ -77,7 +79,7 @@
             </ol>
 
             <p id="analysis-summary" class="analysis-summary">
-              Montrez un bras fléchi à environ 90 degrés. L'app mesure automatiquement le bras et l'avant-bras visibles.
+              Montrez un bras fléchi. L'app garde automatiquement le meilleur scan détecté.
             </p>
           </section>
         </div>
@@ -106,6 +108,23 @@
               <strong id="classification-output">Non analysée</strong>
             </article>
           </div>
+
+          <div class="arm-results">
+            <article class="arm-result-card" id="first-arm-card">
+              <span>Bras 1</span>
+              <strong>En attente</strong>
+              <p>Validez un premier bras quand la qualité est suffisante.</p>
+            </article>
+            <article class="arm-result-card" id="second-arm-card">
+              <span>Bras 2</span>
+              <strong>En attente</strong>
+              <p>L'app vous guidera vers le deuxième bras après validation du premier.</p>
+            </article>
+          </div>
+
+          <p id="comparison-summary" class="analysis-summary">
+            Complétez les deux bras pour afficher la comparaison.
+          </p>
         </section>
       </section>
     </main>
