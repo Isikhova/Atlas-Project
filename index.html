@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AtlasFit - Module de détection</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="detection-shell">
+      <section class="detector-panel" aria-labelledby="app-title">
+        <header class="detector-header">
+          <div class="brand-row">
+            <div class="brand-mark" aria-hidden="true">A</div>
+            <div>
+              <h1 id="app-title">AtlasFit Detection</h1>
+              <p>Scan automatique du bras pour estimer le profil biceps.</p>
+            </div>
+          </div>
+          <span id="analysis-confidence" class="status-pill">Modèle en chargement</span>
+        </header>
+
+        <div class="scanner-layout">
+          <section class="scanner-panel" aria-labelledby="scan-title">
+            <div class="section-title">
+              <h2 id="scan-title">Scan biceps</h2>
+              <span id="camera-status">Caméra inactive.</span>
+            </div>
+
+            <div class="canvas-wrap">
+              <video id="camera-video" autoplay playsinline muted></video>
+              <canvas id="body-canvas" width="460" height="620" aria-label="Scanner corporel"></canvas>
+              <div id="canvas-empty" class="scan-empty">
+                <strong>Prêt pour le scan</strong>
+                <span>Montrez un bras fléchi à 90 degrés, épaule, coude et poignet visibles.</span>
+              </div>
+              <div class="scan-frame" aria-hidden="true">
+                <span class="scan-line"></span>
+              </div>
+            </div>
+
+            <div class="scan-actions">
+              <button id="start-camera" type="button">Démarrer caméra</button>
+              <button id="run-scan" type="button" disabled>Analyser</button>
+              <button id="freeze-camera" type="button" disabled>Capturer</button>
+            </div>
+
+            <label class="upload-card" for="photo-input">
+              <input id="photo-input" type="file" accept="image/*" />
+              <span class="upload-icon" aria-hidden="true"></span>
+              <strong>Importer une photo</strong>
+              <small>Bras fléchi, poing fermé, épaule/coude/poignet visibles.</small>
+            </label>
+
+            <ul class="capture-protocol">
+              <li>Bras fléchi autour de 90°</li>
+              <li>Épaule, coude et poignet dans le cadre</li>
+              <li>Caméra face ou trois-quarts, fond simple</li>
+            </ul>
+          </section>
+
+          <section class="progress-panel" aria-labelledby="progress-title">
+            <div class="section-title">
+              <h2 id="progress-title">Lecture du bras</h2>
+              <span id="scan-percent">0%</span>
+            </div>
+
+            <div class="progress-track" aria-label="Progression du scan">
+              <span id="scan-progress"></span>
+            </div>
+
+            <ol class="scan-steps">
+              <li class="active" data-step="detect">Épaule, coude, poignet</li>
+              <li data-step="angle">Angle de flexion</li>
+              <li data-step="measure">Bras / avant-bras</li>
+              <li data-step="result">Profil biceps</li>
+            </ol>
+
+            <p id="analysis-summary" class="analysis-summary">
+              Montrez un bras fléchi à environ 90 degrés. L'app mesure automatiquement le bras et l'avant-bras visibles.
+            </p>
+          </section>
+        </div>
+
+        <section class="metrics-panel" aria-labelledby="metrics-title">
+          <div class="section-title">
+            <h2 id="metrics-title">Mesures détectées</h2>
+            <button id="reset-analysis" class="secondary-action" type="button">Réinitialiser</button>
+          </div>
+
+          <div class="metrics-grid">
+            <article class="metric-card">
+              <span>Bras détecté</span>
+              <strong id="limb-output">-</strong>
+            </article>
+            <article class="metric-card">
+              <span id="primary-ratio-label">Bras / avant-bras</span>
+              <strong id="ratio-femur-tibia">-</strong>
+            </article>
+            <article class="metric-card">
+              <span id="secondary-ratio-label">Qualité capture</span>
+              <strong id="ratio-femur-torso">-</strong>
+            </article>
+            <article class="metric-card">
+              <span>Profil biceps estimé</span>
+              <strong id="classification-output">Non analysée</strong>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
