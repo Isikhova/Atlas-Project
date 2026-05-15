@@ -46,6 +46,9 @@ const MODEL_URL =
 
 const VALGUS_AUTO_SAVE_THRESHOLD = 94;
 const VALGUS_CAMERA_WARMUP_MS = 15000;
+const BICEPS_AUTO_SAVE_THRESHOLD = 94;
+const BICEPS_MIN_ANGLE = 90;
+const BICEPS_MAX_ANGLE = 91;
 
 const POSE = {
   leftShoulder: 11,
@@ -117,18 +120,18 @@ function modeCopy() {
 
   return {
     title: "Scan biceps",
-    empty: "Montrez un bras fléchi, coude et poignet bien visibles.",
-    upload: "Bras fléchi, poing fermé, épaule/coude/poignet visibles.",
-    summary: "Montrez un bras fléchi. L'app garde automatiquement le meilleur scan détecté.",
-    live: "Détection live active. Montrez un bras fléchi, épaule/coude/poignet visibles.",
-    photo: "Photo importée. Analyse automatique du bras visible.",
-    ready: "Modèle prêt. Montrez un bras fléchi; le meilleur scan sera gardé automatiquement.",
+    empty: "Levez un bras fléchi, coude et poignet bien visibles.",
+    upload: "Bras levé et fléchi, poing fermé, épaule/coude/poignet visibles.",
+    summary: "Levez un bras fléchi. L'app garde automatiquement le meilleur scan détecté.",
+    live: "Détection live active. Levez un bras fléchi, épaule/coude/poignet visibles.",
+    photo: "Photo importée. Analyse automatique du bras levé visible.",
+    ready: "Modèle prêt. Levez un bras fléchi; le meilleur scan sera gardé automatiquement.",
     labels: ["Bras / avant-bras", "Qualité capture", "Profil biceps estimé"],
     steps: ["Épaule, coude, poignet", "Angle de flexion", "Bras / avant-bras", "Profil biceps"],
     protocol: [
+      "Bras levé obligatoire",
       "Montrez surtout coude et poignet",
       "Épaule visible si possible, sans forcer",
-      "Angle accepté: environ 70° à 130°",
     ],
   };
 }
@@ -148,7 +151,7 @@ function applyModeCopy() {
   captureProtocol.innerHTML = copy.protocol.map((item) => `<li>${item}</li>`).join("");
   scanActions.classList.toggle("compact", scanMode === "valgus");
   completeArmButton.textContent = "Valider ce bras";
-  completeArmButton.hidden = scanMode === "valgus";
+  completeArmButton.hidden = true;
   useBestFrameButton.hidden = scanMode === "valgus";
   completeArmButton.disabled = true;
   useBestFrameButton.disabled = scanMode !== "biceps" || !bestArmScan;
@@ -378,6 +381,18 @@ function classifyBiceps(candidate) {
   return "proxy biceps moyen";
 }
 
+function isArmRaised(candidate) {
+  const [shoulder, elbow, wrist] = candidate.points;
+  const segment = Math.max(candidate.total, 1);
+  const wristAboveShoulder = wrist.y < shoulder.y - segment * 0.04;
+  const elbowNearOrAboveShoulder = elbow.y < shoulder.y + segment * 0.08;
+  return wristAboveShoulder && elbowNearOrAboveShoulder;
+}
+
+function isBicepsAngleValid(angle) {
+  return angle >= BICEPS_MIN_ANGLE && angle <= BICEPS_MAX_ANGLE;
+}
+
 function valgusDeviation(candidate) {
   return Math.max(0, 180 - candidate.angle);
 }
@@ -406,6 +421,8 @@ function toArmScan(candidate) {
     ratio: candidate.ratio,
     quality: captureQuality(candidate),
     angle: candidate.angle,
+    raised: isArmRaised(candidate),
+    angleValid: isBicepsAngleValid(candidate.angle),
     classification: classifyBiceps(candidate),
     upperArm: candidate.upperArm,
     forearm: candidate.forearm,
@@ -414,11 +431,17 @@ function toArmScan(candidate) {
 
 function bicepsGuidance(candidate) {
   const quality = captureQuality(candidate);
+  if (!isArmRaised(candidate)) {
+    return "Bras trop bas: levez le bras fléchi, avec le poignet au-dessus de l'épaule.";
+  }
   if (!candidate.shoulderReliable) {
     return "Épaule faible: gardez le coude/poignet visibles et reculez légèrement pour inclure l'épaule.";
   }
   if (quality < 48) {
     return "Qualité faible: rapprochez le bras ou améliorez la lumière. Coude et poignet doivent rester visibles.";
+  }
+  if (!isBicepsAngleValid(candidate.angle)) {
+    return `Angle incorrect: ajustez le coude entre ${BICEPS_MIN_ANGLE}° et ${BICEPS_MAX_ANGLE}°.`;
   }
   if (candidate.angle < 60 || candidate.angle > 145) {
     return "Angle difficile: fléchissez le bras pour rester entre environ 70° et 130°.";
@@ -638,7 +661,9 @@ function renderDetection(result) {
   latestArmScan = toArmScan(candidate);
   rememberBestScan(latestArmScan);
 
-  const activeStep = quality > 55 ? 3 : candidate.angle < 60 || candidate.angle > 145 ? 1 : 2;
+  const raised = isArmRaised(candidate);
+  const angleValid = isBicepsAngleValid(candidate.angle);
+  const activeStep = quality > 55 && raised && angleValid ? 3 : !raised || !angleValid ? 1 : 2;
   setProgress(quality, activeStep);
   primaryRatioLabel.textContent = "Bras / avant-bras";
   secondaryRatioLabel.textContent = "Qualité capture";
@@ -647,12 +672,34 @@ function renderDetection(result) {
   ratioSecondary.textContent = `${quality}%`;
   classificationOutput.textContent = classification;
   analysisConfidence.textContent = `${quality}% qualité`;
-  completeArmButton.disabled = !canCompleteLatestScan();
+  completeArmButton.disabled = true;
+
+  if (!raised) {
+    analysisSummary.textContent = `${buildGuidance(candidate)} L'enregistrement automatique est bloqué tant que le bras n'est pas levé.`;
+    return;
+  }
+
+  if (!angleValid) {
+    analysisSummary.textContent = `${buildGuidance(candidate)} L'enregistrement automatique est bloqué tant que l'angle n'est pas entre ${BICEPS_MIN_ANGLE}° et ${BICEPS_MAX_ANGLE}°.`;
+    return;
+  }
+
+  if (canCompleteLatestScan()) {
+    if (quality >= BICEPS_AUTO_SAVE_THRESHOLD) {
+      autoSaveBicepsScan();
+      return;
+    }
+    analysisSummary.textContent = `${buildGuidance(candidate)} Gardez le bras immobile jusqu'à ${BICEPS_AUTO_SAVE_THRESHOLD}% pour l'enregistrement automatique.`;
+    return;
+  }
+
   analysisSummary.textContent = buildGuidance(candidate);
 }
 
 function canCompleteLatestScan() {
   if (!latestArmScan || latestArmScan.quality < 50) return false;
+  if (!latestArmScan.raised) return false;
+  if (!latestArmScan.angleValid) return false;
   if (completedScans.length === 0) return true;
   return latestArmScan.side !== completedScans[0].side;
 }
@@ -774,6 +821,34 @@ function autoSaveValgusScan() {
   image.src = snapshot;
   cameraStatus.textContent = "Relevé valgus enregistré automatiquement.";
   renderSavedValgusScan(savedValgusScan);
+}
+
+function autoSaveBicepsScan() {
+  if (!latestArmScan || !canCompleteLatestScan()) return;
+  completedScans.push({ ...latestArmScan });
+  bestArmScan = null;
+  bestFrameDataUrl = "";
+  useBestFrameButton.disabled = true;
+  renderCompletedScans();
+
+  if (completedScans.length === 1) {
+    analysisSummary.textContent = `${latestArmScan.label} enregistré automatiquement. Montrez maintenant l'autre bras, même pose.`;
+    latestArmScan = null;
+    return;
+  }
+
+  isCameraLive = false;
+  cancelAnimationFrame(cameraFrameId);
+  const snapshot = bodyCanvas.toDataURL("image/png");
+  const image = new Image();
+  image.onload = () => {
+    analysisImage = image;
+    drawBaseFrame();
+  };
+  image.src = snapshot;
+  cameraStatus.textContent = "Scan biceps enregistré automatiquement.";
+  analysisSummary.textContent = "Scan biceps des deux bras enregistré automatiquement. Les résultats comparatifs sont affichés.";
+  latestArmScan = null;
 }
 
 function completeCurrentArm() {
@@ -944,6 +1019,9 @@ function loadAnalysisImage(file) {
 function switchMode(mode) {
   if (scanMode === mode) return;
   scanMode = mode;
+  if (isCameraLive) {
+    if (scanMode === "valgus") valgusCameraStartedAt = performance.now();
+  }
   applyModeCopy();
   renderModeResults();
   resetResults();
