@@ -10,10 +10,14 @@ const runScanButton = document.querySelector("#run-scan");
 const completeArmButton = document.querySelector("#complete-arm");
 const useBestFrameButton = document.querySelector("#use-best-frame");
 const resetAnalysisButton = document.querySelector("#reset-analysis");
+const scanActions = document.querySelector(".scan-actions");
+const bicepsModeButton = document.querySelector("#mode-biceps");
+const valgusModeButton = document.querySelector("#mode-valgus");
 const cameraVideo = document.querySelector("#camera-video");
 const cameraStatus = document.querySelector("#camera-status");
 const bodyCanvas = document.querySelector("#body-canvas");
 const canvasEmpty = document.querySelector("#canvas-empty");
+const emptyGuidance = document.querySelector("#empty-guidance");
 const analysisSummary = document.querySelector("#analysis-summary");
 const analysisConfidence = document.querySelector("#analysis-confidence");
 const primaryRatioLabel = document.querySelector("#primary-ratio-label");
@@ -25,6 +29,13 @@ const classificationOutput = document.querySelector("#classification-output");
 const firstArmCard = document.querySelector("#first-arm-card");
 const secondArmCard = document.querySelector("#second-arm-card");
 const comparisonSummary = document.querySelector("#comparison-summary");
+const scanTitle = document.querySelector("#scan-title");
+const uploadGuidance = document.querySelector("#upload-guidance");
+const captureProtocol = document.querySelector("#capture-protocol");
+const stepDetect = document.querySelector("#step-detect");
+const stepAngle = document.querySelector("#step-angle");
+const stepMeasure = document.querySelector("#step-measure");
+const stepResult = document.querySelector("#step-result");
 const scanProgress = document.querySelector("#scan-progress");
 const scanPercent = document.querySelector("#scan-percent");
 const scanSteps = [...document.querySelectorAll(".scan-steps li")];
@@ -33,6 +44,9 @@ const canvasContext = bodyCanvas.getContext("2d");
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
 
+const VALGUS_AUTO_SAVE_THRESHOLD = 94;
+const VALGUS_CAMERA_WARMUP_MS = 15000;
+
 const POSE = {
   leftShoulder: 11,
   rightShoulder: 12,
@@ -40,6 +54,12 @@ const POSE = {
   rightElbow: 14,
   leftWrist: 15,
   rightWrist: 16,
+  leftPinky: 17,
+  rightPinky: 18,
+  leftIndex: 19,
+  rightIndex: 20,
+  leftThumb: 21,
+  rightThumb: 22,
 };
 
 let poseLandmarker = null;
@@ -54,6 +74,10 @@ let latestArmScan = null;
 let bestArmScan = null;
 let bestFrameDataUrl = "";
 let completedScans = [];
+let latestValgusScan = null;
+let savedValgusScan = null;
+let valgusCameraStartedAt = 0;
+let scanMode = "biceps";
 
 function prepareSteps() {
   scanSteps.forEach((step, index) => {
@@ -71,16 +95,81 @@ function setProgress(percent, activeStep) {
   });
 }
 
-function resetResults(summary = "Montrez un bras fléchi avec coude et poignet visibles, puis lancez l'analyse.") {
-  primaryRatioLabel.textContent = "Bras / avant-bras";
-  secondaryRatioLabel.textContent = "Qualité capture";
+function modeCopy() {
+  if (scanMode === "valgus") {
+    return {
+      title: "Scan valgus du coude",
+      empty: "Tendez les deux bras, paumes ouvertes face caméra.",
+      upload: "Deux bras tendus, paumes ouvertes face caméra, coudes/poignets visibles.",
+      summary: "Montrez les deux bras presque tendus face caméra pour relever le valgus gauche/droit.",
+      live: "Détection live active. Tendez les deux bras, paumes ouvertes face caméra.",
+      photo: "Photo importée. Analyse automatique du valgus avec paumes ouvertes visibles.",
+      ready: "Modèle prêt. Tendez les deux bras, paumes ouvertes face caméra.",
+      labels: ["Écart gauche/droite", "Qualité moyenne", "Profil valgus estimé"],
+      steps: ["Deux bras détectés", "Coudes presque tendus", "Angles gauche/droit", "Relevé complété"],
+      protocol: [
+        "Paumes TOUJOURS ouvertes face caméra",
+        "Deux bras tendus ou presque tendus",
+        "Caméra bien en face, assez reculée",
+      ],
+    };
+  }
+
+  return {
+    title: "Scan biceps",
+    empty: "Montrez un bras fléchi, coude et poignet bien visibles.",
+    upload: "Bras fléchi, poing fermé, épaule/coude/poignet visibles.",
+    summary: "Montrez un bras fléchi. L'app garde automatiquement le meilleur scan détecté.",
+    live: "Détection live active. Montrez un bras fléchi, épaule/coude/poignet visibles.",
+    photo: "Photo importée. Analyse automatique du bras visible.",
+    ready: "Modèle prêt. Montrez un bras fléchi; le meilleur scan sera gardé automatiquement.",
+    labels: ["Bras / avant-bras", "Qualité capture", "Profil biceps estimé"],
+    steps: ["Épaule, coude, poignet", "Angle de flexion", "Bras / avant-bras", "Profil biceps"],
+    protocol: [
+      "Montrez surtout coude et poignet",
+      "Épaule visible si possible, sans forcer",
+      "Angle accepté: environ 70° à 130°",
+    ],
+  };
+}
+
+function applyModeCopy() {
+  const copy = modeCopy();
+  scanTitle.textContent = copy.title;
+  emptyGuidance.textContent = copy.empty;
+  uploadGuidance.textContent = copy.upload;
+  primaryRatioLabel.textContent = copy.labels[0];
+  secondaryRatioLabel.textContent = copy.labels[1];
+  classificationOutput.previousElementSibling.textContent = copy.labels[2];
+  stepDetect.textContent = copy.steps[0];
+  stepAngle.textContent = copy.steps[1];
+  stepMeasure.textContent = copy.steps[2];
+  stepResult.textContent = copy.steps[3];
+  captureProtocol.innerHTML = copy.protocol.map((item) => `<li>${item}</li>`).join("");
+  scanActions.classList.toggle("compact", scanMode === "valgus");
+  completeArmButton.textContent = "Valider ce bras";
+  completeArmButton.hidden = scanMode === "valgus";
+  useBestFrameButton.hidden = scanMode === "valgus";
+  completeArmButton.disabled = true;
+  useBestFrameButton.disabled = scanMode !== "biceps" || !bestArmScan;
+  bicepsModeButton.classList.toggle("active", scanMode === "biceps");
+  valgusModeButton.classList.toggle("active", scanMode === "valgus");
+}
+
+function resetResults(summary = modeCopy().summary) {
+  const copy = modeCopy();
+  primaryRatioLabel.textContent = copy.labels[0];
+  secondaryRatioLabel.textContent = copy.labels[1];
+  classificationOutput.previousElementSibling.textContent = copy.labels[2];
   limbOutput.textContent = "-";
   ratioPrimary.textContent = "-";
   ratioSecondary.textContent = "-";
   classificationOutput.textContent = "Non analysée";
   completeArmButton.disabled = true;
-  useBestFrameButton.disabled = !bestArmScan;
+  useBestFrameButton.disabled = scanMode !== "biceps" || !bestArmScan;
   latestArmScan = null;
+  latestValgusScan = null;
+  savedValgusScan = null;
   analysisSummary.textContent = summary;
   if (poseLandmarker) analysisConfidence.textContent = "Prêt";
   setProgress(0, 0);
@@ -146,6 +235,21 @@ function drawLine(points, color) {
   canvasContext.restore();
 }
 
+function drawHandPoints(points, color) {
+  canvasContext.save();
+  points.forEach((point) => {
+    if ((point.visibility || 0) < 0.28) return;
+    canvasContext.beginPath();
+    canvasContext.arc(point.x, point.y, 5, 0, Math.PI * 2);
+    canvasContext.fillStyle = color;
+    canvasContext.fill();
+    canvasContext.strokeStyle = "#ffffff";
+    canvasContext.lineWidth = 2;
+    canvasContext.stroke();
+  });
+  canvasContext.restore();
+}
+
 function distance(first, second) {
   return Math.hypot(first.x - second.x, first.y - second.y);
 }
@@ -198,32 +302,101 @@ function captureQuality(candidate) {
   return Math.round(Math.min(100, visibilityScore + angleScore + sizeScore + stabilityBonus));
 }
 
-function chooseBestArm(landmarks, frame) {
-  const configs = [
+function valgusQuality(candidate) {
+  const visibilityScore = candidate.reliability * 54;
+  const extensionScore = Math.max(0, 1 - Math.abs(candidate.angle - 172) / 48) * 24;
+  const sizeScore = Math.min(1, candidate.total / 125) * 17;
+  const stabilityBonus = candidate.elbowReliable && candidate.wristReliable ? 5 : 0;
+  return Math.round(Math.min(100, visibilityScore + extensionScore + sizeScore + stabilityBonus));
+}
+
+function armConfigs() {
+  return [
     {
       type: "arm",
       side: "gauche",
       label: "Bras gauche",
+      resultLabel: "Coude gauche",
       indices: [POSE.leftShoulder, POSE.leftElbow, POSE.leftWrist],
+      handIndices: [POSE.leftPinky, POSE.leftIndex, POSE.leftThumb],
     },
     {
       type: "arm",
       side: "droit",
       label: "Bras droit",
+      resultLabel: "Coude droit",
       indices: [POSE.rightShoulder, POSE.rightElbow, POSE.rightWrist],
+      handIndices: [POSE.rightPinky, POSE.rightIndex, POSE.rightThumb],
     },
   ];
+}
 
-  return configs
+function chooseBestArm(landmarks, frame) {
+  return armConfigs()
     .map((config) => armCandidate(landmarks, frame, config))
     .filter((candidate) => candidate.elbowReliable && candidate.wristReliable && candidate.total > 48)
     .sort((a, b) => captureQuality(b) - captureQuality(a))[0];
+}
+
+function chooseValgusArms(landmarks, frame) {
+  return armConfigs()
+    .map((config) => {
+      const candidate = armCandidate(landmarks, frame, config);
+      const hand = palmOpenSignal(landmarks, frame, config, candidate);
+      return { ...candidate, hand };
+    })
+    .map((candidate) => ({
+      ...candidate,
+      quality: valgusQuality(candidate),
+      measurable: candidate.elbowReliable && candidate.wristReliable && candidate.hand.open && candidate.total > 34,
+    }));
+}
+
+function palmOpenSignal(landmarks, frame, config, candidate) {
+  const handPoints = config.handIndices.map((index) => landmarkToCanvas(landmarks[index], frame));
+  const visible = handPoints.filter((point) => point.visibility >= 0.28);
+  if (visible.length < 3) {
+    return { open: false, reason: "paume non visible", points: handPoints };
+  }
+
+  const [pinky, index, thumb] = handPoints;
+  const palmWidth = Math.max(distance(pinky, index), distance(thumb, index), distance(thumb, pinky));
+  const forearm = Math.max(candidate.forearm, 1);
+  const spreadRatio = palmWidth / forearm;
+  const awayFromWrist = handPoints.some((point) => distance(point, candidate.points[2]) / forearm > 0.12);
+  const open = spreadRatio >= 0.14 && awayFromWrist;
+  return {
+    open,
+    reason: open ? "paume ouverte" : "ouvrez la paume face caméra",
+    points: handPoints,
+  };
 }
 
 function classifyBiceps(candidate) {
   if (candidate.ratio >= 1.08) return "proxy biceps long";
   if (candidate.ratio <= 0.92) return "proxy biceps court";
   return "proxy biceps moyen";
+}
+
+function valgusDeviation(candidate) {
+  return Math.max(0, 180 - candidate.angle);
+}
+
+function classifyValgus(candidate) {
+  const deviation = valgusDeviation(candidate);
+  if (deviation <= 8) return "valgus faible / neutre";
+  if (deviation <= 15) return "valgus modéré";
+  return "valgus marqué";
+}
+
+function classifyValgusPair(results) {
+  const complete = results.filter(Boolean);
+  if (!complete.length) return "Non analysée";
+  const marked = complete.filter((result) => result.deviation > 15).length;
+  const moderate = complete.filter((result) => result.deviation > 8).length;
+  if (marked) return "valgus marqué";
+  if (moderate) return "valgus modéré";
+  return "valgus faible / neutre";
 }
 
 function toArmScan(candidate) {
@@ -253,7 +426,191 @@ function bicepsGuidance(candidate) {
   return "Capture exploitable: estimation proxy basée sur les proportions bras/avant-bras.";
 }
 
+function valgusGuidance(candidate) {
+  const quality = valgusQuality(candidate);
+  if (!candidate.shoulderReliable || !candidate.elbowReliable || !candidate.wristReliable) {
+    return "Repères incomplets: gardez épaule, coude et poignet dans le cadre.";
+  }
+  if (candidate.angle < 150) {
+    return "Bras trop fléchi: tendez davantage le bras pour mesurer le valgus.";
+  }
+  if (quality < 52) {
+    return "Qualité faible: placez le bras bien face caméra et améliorez la lumière.";
+  }
+  return "Capture exploitable: estimation 2D du valgus, à confirmer hors contexte médical.";
+}
+
+function toValgusResult(candidate) {
+  const quality = valgusQuality(candidate);
+  const deviation = valgusDeviation(candidate);
+  return {
+    side: candidate.side,
+    label: candidate.resultLabel,
+    deviation,
+    angle: candidate.angle,
+    quality,
+    classification: classifyValgus(candidate),
+    confidence: quality >= 62 ? "bonne confiance" : quality >= 45 ? "confiance correcte" : "confiance basse",
+  };
+}
+
+function renderValgusCard(card, result, fallback) {
+  if (!result) {
+    card.innerHTML = fallback;
+    card.classList.remove("complete");
+    return;
+  }
+  card.classList.add("complete");
+  card.innerHTML = `
+    <span>${result.label}</span>
+    <strong>${result.deviation.toFixed(1)}° · ${result.classification}</strong>
+    <p>Angle ${Math.round(result.angle)}° · qualité ${result.quality}% · ${result.confidence}</p>
+  `;
+}
+
+function renderValgusResults(results) {
+  const left = results.find((result) => result?.side === "gauche");
+  const right = results.find((result) => result?.side === "droit");
+  renderValgusCard(
+    firstArmCard,
+    left,
+    "<span>Coude gauche</span><strong>En attente</strong><p>Gardez coude et poignet gauches dans le cadre.</p>"
+  );
+  renderValgusCard(
+    secondArmCard,
+    right,
+    "<span>Coude droit</span><strong>En attente</strong><p>Gardez coude et poignet droits dans le cadre.</p>"
+  );
+
+  if (!left && !right) {
+    comparisonSummary.textContent = "Aucun relevé exploitable pour le moment. Reculez légèrement et montrez les deux bras.";
+    return;
+  }
+
+  if (!left || !right) {
+    const found = left || right;
+    comparisonSummary.textContent = `${found.label} relevé (${found.deviation.toFixed(1)}°). Continuez: il manque l'autre coude pour compléter le relevé bilatéral.`;
+    return;
+  }
+
+  const gap = Math.abs(left.deviation - right.deviation);
+  const symmetry =
+    gap <= 3
+      ? "relevé symétrique"
+      : gap <= 7
+        ? "légère asymétrie"
+        : "asymétrie marquée";
+  comparisonSummary.textContent = `Relevé valgus complété: gauche ${left.deviation.toFixed(1)}°, droite ${right.deviation.toFixed(1)}°. ${symmetry}, écart ${gap.toFixed(1)}°.`;
+}
+
+function renderSavedValgusScan(scan) {
+  renderValgusResults([scan.left, scan.right]);
+  setProgress(100, 3);
+  limbOutput.textContent = "Deux bras";
+  ratioPrimary.textContent = `${scan.gap.toFixed(1)}°`;
+  ratioSecondary.textContent = `${scan.quality}%`;
+  classificationOutput.textContent = scan.classification;
+  analysisConfidence.textContent = "Relevé enregistré";
+  analysisSummary.textContent = `Relevé valgus enregistré automatiquement: gauche ${scan.left.deviation.toFixed(1)}°, droite ${scan.right.deviation.toFixed(1)}°, écart ${scan.gap.toFixed(1)}°.`;
+  completeArmButton.disabled = true;
+}
+
+function renderModeResults() {
+  if (scanMode === "valgus") {
+    if (savedValgusScan) renderSavedValgusScan(savedValgusScan);
+    else renderValgusResults([]);
+  } else {
+    renderCompletedScans();
+  }
+}
+
+function renderValgusDetection(result) {
+  if (savedValgusScan) {
+    renderSavedValgusScan(savedValgusScan);
+    return;
+  }
+
+  const frame = drawBaseFrame();
+  const landmarks = result?.landmarks?.[0];
+  if (!landmarks) {
+    setProgress(25, 0);
+    analysisConfidence.textContent = "Aucune pose";
+    analysisSummary.textContent = "Aucun bras détecté. Tendez les deux bras face caméra avec coudes et poignets visibles.";
+    latestArmScan = null;
+    latestValgusScan = null;
+    completeArmButton.disabled = true;
+    renderValgusResults([]);
+    return;
+  }
+
+  const candidates = chooseValgusArms(landmarks, frame);
+  const measurable = candidates.filter((candidate) => candidate.measurable);
+  if (!measurable.length) {
+    const armSeen = candidates.some((candidate) => candidate.elbowReliable && candidate.wristReliable && candidate.total > 34);
+    const missingPalms = armSeen && candidates.some((candidate) => !candidate.hand.open);
+    setProgress(45, 1);
+    analysisConfidence.textContent = missingPalms ? "Paumes non validées" : "Bras incomplet";
+    analysisSummary.textContent = missingPalms
+      ? "Ouvrez les deux paumes face caméra. Le valgus ne sera pas enregistré sans paumes ouvertes visibles."
+      : "Pose détectée, mais aucun coude/poignet n'est assez visible. Reculez ou écartez les bras.";
+    latestArmScan = null;
+    latestValgusScan = null;
+    completeArmButton.disabled = true;
+    renderValgusResults([]);
+    return;
+  }
+
+  measurable.forEach((candidate) => {
+    const color = candidate.side === "gauche" ? "#1f8a79" : "#cf5b43";
+    drawLine(candidate.points, color);
+    drawHandPoints(candidate.hand.points, color);
+  });
+  const results = measurable.map(toValgusResult);
+  const left = results.find((scan) => scan.side === "gauche");
+  const right = results.find((scan) => scan.side === "droit");
+  const complete = Boolean(left && right);
+  const quality = Math.round(results.reduce((sum, scan) => sum + scan.quality, 0) / results.length);
+  const extensionReady = measurable.every((candidate) => candidate.angle >= 140);
+  const progress = complete ? Math.max(72, quality) : Math.max(52, Math.round(quality * 0.8));
+  const activeStep = complete ? 3 : extensionReady ? 2 : 1;
+  const pairClassification = classifyValgusPair(results);
+  const gap = complete ? Math.abs(left.deviation - right.deviation) : null;
+
+  latestValgusScan = { left, right, complete, quality, classification: pairClassification, gap };
+  setProgress(progress, activeStep);
+  primaryRatioLabel.textContent = "Écart gauche/droite";
+  secondaryRatioLabel.textContent = "Qualité moyenne";
+  limbOutput.textContent = complete ? "Deux bras" : results[0].label;
+  ratioPrimary.textContent = complete ? `${gap.toFixed(1)}°` : "partiel";
+  ratioSecondary.textContent = `${quality}%`;
+  classificationOutput.textContent = pairClassification;
+  analysisConfidence.textContent = `${quality}% qualité`;
+  completeArmButton.disabled = true;
+  useBestFrameButton.disabled = true;
+  latestArmScan = null;
+  renderValgusResults(results);
+  if (complete) {
+    const warmupRemaining = Math.max(0, VALGUS_CAMERA_WARMUP_MS - (performance.now() - valgusCameraStartedAt));
+    if (warmupRemaining > 0) {
+      analysisSummary.textContent = `Calibration valgus: ${Math.ceil(warmupRemaining / 1000)}s restantes avant validation automatique. Gardez les bras tendus, paumes ouvertes face caméra.`;
+      return;
+    }
+    if (quality >= VALGUS_AUTO_SAVE_THRESHOLD) {
+      autoSaveValgusScan();
+      return;
+    }
+    analysisSummary.textContent = `Relevé prêt, paumes ouvertes validées. Qualité ${quality}%; gardez les bras immobiles jusqu'à ${VALGUS_AUTO_SAVE_THRESHOLD}% pour l'enregistrement automatique.`;
+  } else {
+    analysisSummary.textContent = `${results[0].label} exploitable avec paume ouverte (${results[0].deviation.toFixed(1)}°). Ajoutez l'autre bras avec paume ouverte face caméra.`;
+  }
+}
+
 function renderDetection(result) {
+  if (scanMode === "valgus") {
+    renderValgusDetection(result);
+    return;
+  }
+
   const frame = drawBaseFrame();
   const landmarks = result?.landmarks?.[0];
   if (!landmarks) {
@@ -396,6 +753,29 @@ function renderCompletedScans() {
   comparisonSummary.textContent = `Scan complet: ${first.label} et ${second.label}. ${symmetry}; écart ratio ${ratioGap.toFixed(2)}, qualité moyenne ${qualityAverage}%.`;
 }
 
+function autoSaveValgusScan() {
+  if (!latestValgusScan?.complete || savedValgusScan) return;
+  savedValgusScan = {
+    ...latestValgusScan,
+    left: { ...latestValgusScan.left },
+    right: { ...latestValgusScan.right },
+    savedAt: new Date().toISOString(),
+  };
+
+  isCameraLive = false;
+  cancelAnimationFrame(cameraFrameId);
+  const snapshot = bodyCanvas.toDataURL("image/png");
+  const image = new Image();
+  image.onload = () => {
+    analysisImage = image;
+    drawBaseFrame();
+    renderSavedValgusScan(savedValgusScan);
+  };
+  image.src = snapshot;
+  cameraStatus.textContent = "Relevé valgus enregistré automatiquement.";
+  renderSavedValgusScan(savedValgusScan);
+}
+
 function completeCurrentArm() {
   if (!latestArmScan || !canCompleteLatestScan()) return;
   completedScans.push(latestArmScan);
@@ -431,7 +811,7 @@ async function initPoseModel() {
       minTrackingConfidence: 0.45,
     });
     analysisConfidence.textContent = "Prêt";
-    analysisSummary.textContent = "Modèle prêt. Montrez un bras fléchi; le meilleur scan sera gardé automatiquement.";
+    analysisSummary.textContent = modeCopy().ready;
     runScanButton.disabled = !analysisImage && !isCameraLive;
   } catch (error) {
     console.error("Pose model failed", error);
@@ -505,13 +885,16 @@ async function startCamera() {
     cameraVideo.srcObject = cameraStream;
     await cameraVideo.play();
     isCameraLive = true;
+    if (scanMode === "valgus") {
+      valgusCameraStartedAt = performance.now();
+    }
     analysisImage = null;
     await setRunningMode("VIDEO");
     canvasEmpty.hidden = true;
     captureButton.disabled = false;
     runScanButton.disabled = !poseLandmarker;
     cameraStatus.textContent = "Caméra active.";
-    resetResults("Détection live active. Montrez un bras fléchi, épaule/coude/poignet visibles.");
+    resetResults(modeCopy().live);
     drawCameraLoop();
   } catch (error) {
     const errorName = error?.name || "Erreur inconnue";
@@ -551,11 +934,22 @@ function loadAnalysisImage(file) {
     canvasEmpty.hidden = true;
     cameraStatus.textContent = "Photo importée.";
     runScanButton.disabled = !poseLandmarker;
-    resetResults("Photo importée. Analyse automatique du bras visible.");
+    resetResults(modeCopy().photo);
     drawBaseFrame();
     detectCurrentFrame();
   };
   image.src = URL.createObjectURL(file);
+}
+
+function switchMode(mode) {
+  if (scanMode === mode) return;
+  scanMode = mode;
+  applyModeCopy();
+  renderModeResults();
+  resetResults();
+  if (analysisImage || isCameraLive) {
+    detectCurrentFrame();
+  }
 }
 
 function resetAnalysis() {
@@ -565,8 +959,11 @@ function resetAnalysis() {
   latestArmScan = null;
   bestArmScan = null;
   bestFrameDataUrl = "";
+  latestValgusScan = null;
+  savedValgusScan = null;
+  valgusCameraStartedAt = 0;
   completedScans = [];
-  renderCompletedScans();
+  renderModeResults();
   resetResults();
   if (analysisImage) {
     drawBaseFrame();
@@ -590,8 +987,11 @@ runScanButton.addEventListener("click", detectCurrentFrame);
 completeArmButton.addEventListener("click", completeCurrentArm);
 useBestFrameButton.addEventListener("click", useBestFrame);
 resetAnalysisButton.addEventListener("click", resetAnalysis);
+bicepsModeButton.addEventListener("click", () => switchMode("biceps"));
+valgusModeButton.addEventListener("click", () => switchMode("valgus"));
 
 prepareSteps();
-renderCompletedScans();
+applyModeCopy();
+renderModeResults();
 resetResults("Chargement du modèle de détection biceps...");
 initPoseModel();
