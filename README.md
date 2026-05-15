@@ -13,6 +13,8 @@ Prototype centré sur le module de détection biceps.
 - mesure automatique bras/avant-bras;
 - score de qualité de capture;
 - estimation proxy biceps court/moyen/long.
+- validation du premier bras puis guidage vers le deuxième bras;
+- comparaison des deux bras quand les deux scans sont complétés.
 
 ## Lancer
 
