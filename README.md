@@ -15,6 +15,12 @@ Prototype centré sur le module de détection biceps.
 - estimation proxy biceps court/moyen/long.
 - validation du premier bras puis guidage vers le deuxième bras;
 - comparaison des deux bras quand les deux scans sont complétés.
+- second mode de scan pour estimer le valgus des deux coudes avec les bras tendus;
+- classification valgus faible/neutre, modéré ou marqué.
+- comparaison gauche/droite avec écart angulaire et tolérance de capture basse.
+- validation automatique du relevé valgus à 94%+ pour figer les mesures sans clic utilisateur.
+- contrainte valgus: les deux paumes doivent rester ouvertes face caméra pour autoriser l'enregistrement.
+- délai de calibration valgus: aucune validation automatique pendant les 15 secondes après démarrage caméra.
 
 ## Lancer
 
@@ -28,4 +34,4 @@ Un serveur local est recommandé parce que l'accès caméra est souvent bloqué 
 
 ## Prochaine étape technique
 
-La détection automatique utilise MediaPipe Pose Landmarker côté navigateur. La classification "biceps court/long" reste un proxy: les landmarks de pose mesurent les articulations et segments, pas les insertions ni le ventre musculaire. Pour détecter réellement un muscle court/long, il faudra ajouter segmentation du contour du bras ou un modèle entraîné sur des exemples annotés.
+La détection automatique utilise MediaPipe Pose Landmarker côté navigateur. La classification "biceps court/long" et l'estimation du valgus restent des proxys: les landmarks de pose mesurent les articulations et segments en 2D, pas les insertions ni l'axe osseux exact. Pour détecter réellement un muscle court/long ou mesurer médicalement un valgus, il faudra ajouter segmentation du contour du bras, calibration caméra ou un modèle entraîné sur des exemples annotés.
