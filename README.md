@@ -9,12 +9,15 @@ Prototype centré sur le module de détection biceps.
 - image live ou capture figée;
 - détection automatique des landmarks via MediaPipe Pose Landmarker;
 - scan caméra ou photo d'un bras fléchi;
+- contrainte biceps: le bras doit être levé pour autoriser l'enregistrement automatique;
+- contrainte biceps: l'angle du coude doit être compris entre 90° et 91°;
 - détection automatique épaule, coude, poignet;
 - mesure automatique bras/avant-bras;
 - score de qualité de capture;
 - estimation proxy biceps court/moyen/long.
-- validation du premier bras puis guidage vers le deuxième bras;
+- validation automatique du premier bras puis guidage vers le deuxième bras;
 - comparaison des deux bras quand les deux scans sont complétés.
+- seuil de validation biceps à 94%+ pour figer automatiquement les mesures;
 - second mode de scan pour estimer le valgus des deux coudes avec les bras tendus;
 - classification valgus faible/neutre, modéré ou marqué.
 - comparaison gauche/droite avec écart angulaire et tolérance de capture basse.
