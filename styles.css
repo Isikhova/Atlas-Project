@@ -103,6 +103,33 @@ h1 {
   font-weight: 800;
 }
 
+.scan-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f6f8f8;
+}
+
+.scan-mode-tabs button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.scan-mode-tabs button.active {
+  border-color: #bdd7cf;
+  background: white;
+  color: var(--forest);
+  box-shadow: 0 8px 20px rgba(20, 31, 35, 0.08);
+}
+
 .scanner-layout {
   display: grid;
   grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 0.9fr);
@@ -215,6 +242,10 @@ h1 {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+}
+
+.scan-actions.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .scan-actions button,
@@ -446,6 +477,10 @@ h1 {
   }
 
   .scan-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .scan-mode-tabs {
     grid-template-columns: 1fr;
   }
 }
