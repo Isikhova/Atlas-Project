@@ -20,6 +20,11 @@
           <span id="analysis-confidence" class="status-pill">Modèle en chargement</span>
         </header>
 
+        <div class="scan-mode-tabs" aria-label="Mode de scan">
+          <button id="mode-biceps" class="active" type="button">Biceps</button>
+          <button id="mode-valgus" type="button">Valgus coude</button>
+        </div>
+
         <div class="scanner-layout">
           <section class="scanner-panel" aria-labelledby="scan-title">
             <div class="section-title">
@@ -32,7 +37,7 @@
               <canvas id="body-canvas" width="460" height="620" aria-label="Scanner corporel"></canvas>
               <div id="canvas-empty" class="scan-empty">
                 <strong>Prêt pour le scan</strong>
-                <span>Montrez un bras fléchi, coude et poignet bien visibles.</span>
+                <span id="empty-guidance">Montrez un bras fléchi, coude et poignet bien visibles.</span>
               </div>
               <div class="scan-frame" aria-hidden="true">
                 <span class="scan-line"></span>
@@ -51,10 +56,10 @@
               <input id="photo-input" type="file" accept="image/*" />
               <span class="upload-icon" aria-hidden="true"></span>
               <strong>Importer une photo</strong>
-              <small>Bras fléchi, poing fermé, épaule/coude/poignet visibles.</small>
+              <small id="upload-guidance">Bras fléchi, poing fermé, épaule/coude/poignet visibles.</small>
             </label>
 
-            <ul class="capture-protocol">
+            <ul id="capture-protocol" class="capture-protocol">
               <li>Montrez surtout coude et poignet</li>
               <li>Épaule visible si possible, sans forcer</li>
               <li>Angle accepté: environ 70° à 130°</li>
@@ -72,10 +77,10 @@
             </div>
 
             <ol class="scan-steps">
-              <li class="active" data-step="detect">Épaule, coude, poignet</li>
-              <li data-step="angle">Angle de flexion</li>
-              <li data-step="measure">Bras / avant-bras</li>
-              <li data-step="result">Profil biceps</li>
+              <li class="active" data-step="detect" id="step-detect">Épaule, coude, poignet</li>
+              <li data-step="angle" id="step-angle">Angle de flexion</li>
+              <li data-step="measure" id="step-measure">Bras / avant-bras</li>
+              <li data-step="result" id="step-result">Profil biceps</li>
             </ol>
 
             <p id="analysis-summary" class="analysis-summary">
